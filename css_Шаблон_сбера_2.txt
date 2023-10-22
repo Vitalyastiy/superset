@@ -1,0 +1,112 @@
+/* SDP Template 2 */
+/* Header */
+.dashboard-component-header span {
+  font-weight: bold;
+}
+.dashboard-header {
+  position: relative;
+}
+.dashboard-header:after {
+  content: '';
+  position: absolute;
+  bottom: 0;
+  left: 0;
+  right: 0;
+  height: 5px;
+  background: linear-gradient(90deg, #00D900, #FEFF00);
+}
+/* Dashboard */
+.dashboard {
+  background: #FFF;
+}
+/* Tabs */
+.ant-tabs .ant-tabs-nav {
+  background: #F7F9FA;
+}
+.ant-tabs .dashboard-component-tabs-content {
+  background: #F7F9FA;
+}
+.ant-tabs .ant-tabs-tab.ant-tabs-tab-active .ant-tabs-tab-btn {
+  color: #00D900;
+}
+.ant-tabs .ant-tabs-tab:hover {
+  color: #08A652;
+}
+.ant-tabs .ant-tabs-ink-bar {
+  background: #08A652;
+}
+/* Card */
+.dashboard .chart-header {
+  font-size: 18px;
+  font-weight: bold;
+}
+.dashboard .dashboard-component-chart-holder {
+  border: 1px solid #DEEBEE;
+  background: #F7F9FA;
+}
+/* Card dots */
+.dashboard .dot {
+  background: #08A652;
+}
+.dashboard .ant-dropdown-trigger:hover .dot {
+  background: #00D900;
+}
+/* Buttons */
+.dashboard .ant-btn.superset-button {
+  background: #08A652;
+  color: #fff;
+}
+.dashboard .ant-btn.superset-button:not([disabled]):hover {
+  background: #00D900;
+}
+/* Filters */
+.dashboard .filters-inactive {
+  background: #08A652;
+}
+.dashboard .filters-inactive:hover {
+  background: #00D900;
+}
+.dashboard .filter-counts {
+  background: #08A652;
+}
+.dashboard .filter-counts:hover {
+  background: #00D900;
+}
+.dashboard .filter-counts .anticon + span {
+  padding-left: 4px;
+  font-size: 0.9em;
+  font-weight: normal;
+} 
+/* Filters box */
+.ant-popover-inner-content {
+  padding-left: 8px;
+  padding-right: 8px;
+}
+.ant-collapse-content-box span,
+.ant-collapse-content-box div {
+  color: #000;
+}
+.ant-collapse-content-box button i svg {
+  color: #000;
+  opacity: 0.25;
+}
+.ant-collapse-content-box button:hover i svg {
+  opacity: 1;
+}
+.filterStatusPopover .ant-popover-inner {
+  background: #FFF;
+}
+.filterStatusPopover .ant-popover-arrow {
+  display: none;
+}
+.filterStatusPopover.ant-popover {
+  padding: 0;
+}
+/* Options box */
+.dashboard .ant-dropdown-menu-item, .ant-dropdown-menu-submenu-title {
+  font-weight: bold;
+}
+/* Table */
+.table tbody tr:nth-child(2n-1) {
+  background: rgb(247,247,247);
+}
