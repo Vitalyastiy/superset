@@ -1,0 +1,25 @@
+<img src="https://cdn.m2.ru/assets/images/open-graph-logo.png" width="200" height="100">
+
+
+титульная надпись
+## Корпоративные дашборды М2
+<figure>
+<img src="https://cdn.m2.ru/assets/images/open-graph-logo.png" width="290" height="170"
+title = "Лого М2">
+<br>
+
+Ознакомиться с подробной инфомрацией по отчетам и дашбордам, к которым нет доступа, можно в документации [**ссылка на документацию**](https://conf.m2.ru/pages/viewpage.action?pageId=228819178). 
+
+<a href="mailto:help@m2.ru?subject=Доступ%20к дашборду Superset&body=Прошу предоставить доступ к %20(указать наименование отчета)">Запросить доступ к выбранному дашборду.</a>
+
+
+пример блока с сылками
+## Сервисы
+###### [Отчет по регистрациям](https://superset-web.m2.ru/superset/dashboard/83/)
+
+###### [ЛК.Сводная информация](https://superset-web.m2.ru/superset/dashboard/165/)
+
+
+<figure>
+<img src="https://cdn.m2.ru/assets/file-upload-server/56403428465201a16c5d6ccab57234af.jpeg" width="100" height="100"
+title = "Лого">
