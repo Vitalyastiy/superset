@@ -1,0 +1,107 @@
+Полезные скрипты
+-- АНАЛИЗ ПРОИЗВОДИТЕЛЬНОСТИ ЧАРТОВ
+WITH chart_loads AS (
+  SELECT
+    SUBSTRING(json FROM '"slice_id": ?([0-9]+)')::INT as chart_id,
+    SUBSTRING(json FROM '"source_id": ?([0-9]+)')::INT as dashboard_id,
+    
+    -- Извлекаем время загрузки (в миллисекундах)
+    CASE 
+      WHEN json LIKE '%duration%' THEN 
+        SUBSTRING(json FROM '"duration": ?([0-9.]+)')::DECIMAL
+      WHEN json LIKE '%load_time%' THEN 
+        SUBSTRING(json FROM '"load_time": ?([0-9.]+)')::DECIMAL
+      WHEN json LIKE '%response_time%' THEN 
+        SUBSTRING(json FROM '"response_time": ?([0-9.]+)')::DECIMAL
+      ELSE NULL
+    END as load_time_ms,
+    
+    SUBSTRING(json FROM '"impression_id": ?"([^"]+)"') as session_id,
+    dttm
+    
+  FROM logs
+  WHERE (json LIKE '%load_chart%' OR json LIKE '%chart_load%' OR json LIKE '%slice_id%')
+    AND json NOT LIKE '%error%'  -- Исключаем ошибки
+    AND dttm >= CURRENT_DATE - INTERVAL '7 days'
+    AND SUBSTRING(json FROM '"slice_id": ?([0-9]+)')::INT IS NOT NULL
+)
+
+SELECT
+  '⏱️ SLOW CHART PERFORMANCE' as report_type,
+  
+  cl.chart_id,
+  s.slice_name as chart_name,
+  s.viz_type as chart_type,
+  d.dashboard_title as parent_dashboard,
+  
+  -- Статистика загрузок
+  COUNT(*) as load_count,
+  COUNT(DISTINCT cl.session_id) as affected_users,
+  
+  -- Временные метрики
+  ROUND(AVG(cl.load_time_ms / 1000.0), 2) as avg_load_time_sec,
+  ROUND(MAX(cl.load_time_ms), 0) as max_load_ms,
+  ROUND(MIN(cl.load_time_ms), 0) as min_load_ms,
+  
+  -- Процент быстрых загрузок (< 3 сек)
+  ROUND(
+    COUNT(CASE WHEN cl.load_time_ms < 3000 THEN 1 END) * 100.0 / COUNT(*), 
+    1
+  ) as fast_loads_percent,
+  
+  -- Процент медленных загрузок (> 10 сек)
+  ROUND(
+    COUNT(CASE WHEN cl.load_time_ms > 10000 THEN 1 END) * 100.0 / COUNT(*), 
+    1
+  ) as slow_loads_percent,
+  
+  -- Статус производительности
+  CASE
+    WHEN AVG(cl.load_time_ms) > 15000 THEN '🔴 КРИТИЧНО'
+    WHEN AVG(cl.load_time_ms) > 8000 THEN '🟠 МЕДЛЕННО'
+    WHEN AVG(cl.load_time_ms) > 4000 THEN '🟡 НОРМА'
+    ELSE '🟢 БЫСТРО'
+  END as performance_status,
+  
+  -- Рекомендации
+  CASE
+    WHEN AVG(cl.load_time_ms) > 15000 AND s.viz_type = 'table' THEN '📊 Добавить пагинацию в таблицу'
+    WHEN AVG(cl.load_time_ms) > 15000 THEN '⚡ Критично: оптимизировать SQL запрос'
+    WHEN AVG(cl.load_time_ms) > 8000 AND s.viz_type IN ('line', 'bar') THEN '📈 Уменьшить период данных'
+    WHEN AVG(cl.load_time_ms) > 8000 THEN '🔧 Оптимизировать запрос'
+    WHEN COUNT(CASE WHEN cl.load_time_ms > 10000 THEN 1 END) > COUNT(*) * 0.3 THEN '📊 Нестабильная производительность'
+    ELSE '✅ Производительность в норме'
+  END as recommendation,
+  
+  -- Последняя загрузка
+  MAX(cl.dttm) as last_load
+
+FROM chart_loads cl
+LEFT JOIN slices s ON s.id = cl.chart_id
+LEFT JOIN dashboards d ON d.id = cl.dashboard_id
+
+WHERE cl.load_time_ms IS NOT NULL
+  AND cl.load_time_ms > 0  -- Исключаем некорректные значения
+
+GROUP BY 
+  cl.chart_id,
+  s.slice_name,
+  s.viz_type,
+  d.dashboard_title
+
+HAVING ROUND(AVG(cl.load_time_ms / 1000.0), 2) > 4 -- COUNT(*) >= 5  -- Показываем только чарты с 5+ загрузками
+
+ORDER BY 
+  AVG(cl.load_time_ms) DESC,  -- Сначала самые медленные
+  COUNT(*) DESC;
+
+
+
+
+
+----------------
+
+
+
+
+
