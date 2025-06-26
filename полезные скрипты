@@ -249,3 +249,97 @@ ORDER BY
     ELSE 4
   END,
   COUNT(*) DESC;
+
+---------------------------------------------------------------------------
+
+
+WITH chart_errors AS (
+  SELECT
+    SUBSTRING(json FROM '"slice_id": ?([0-9]+)')::INT as chart_id,
+    SUBSTRING(json FROM '"source_id": ?([0-9]+)')::INT AS dashboard_id,
+    dttm,
+    -- Детализация типов ошибок для чартов
+    CASE
+      WHEN json LIKE '%timeout%' OR json LIKE '%TimeoutError%' THEN 'TIMEOUT'
+      WHEN json LIKE '%connection%' OR json LIKE '%ConnectionError%' THEN 'CONNECTION'
+      WHEN json LIKE '%permission%' OR json LIKE '%PermissionError%' THEN 'PERMISSION'
+      WHEN json LIKE '%failed_query%' OR json LIKE '%QueryError%' THEN 'SQL_ERROR'
+      WHEN json LIKE '%memory%' OR json LIKE '%MemoryError%' THEN 'MEMORY'
+      WHEN json LIKE '%DML is not allowed%' THEN 'DML_VIOLATION'
+      WHEN json LIKE '%viz_type%' OR json LIKE '%visualization%' THEN 'VISUALIZATION_ERROR'
+      WHEN json LIKE '%form_data%' THEN 'CONFIG_ERROR'
+      WHEN json LIKE '%datasource%' THEN 'DATASOURCE_ERROR'
+      -- Добавим специфичную ошибку из ваших логов
+      WHEN json LIKE '%Can''t load plugin%' OR json LIKE '%sqlalchemy.dialects%' THEN 'PLUGIN_ERROR'
+      ELSE 'OTHER_ERROR'
+    END as error_category,
+    SUBSTRING(json FROM '"impression_id": ?"([^"]+)"') as session_id,
+    -- Извлекаем детали ошибки для анализа
+    SUBSTRING(json FROM '"error_details": ?"([^"]+)"') as error_details
+  FROM logs
+  WHERE json LIKE '%error%'
+    AND (json LIKE '%slice_id%' OR json LIKE '%chart%')
+    AND dttm >= CURRENT_DATE - INTERVAL '7 days'
+)
+
+SELECT
+  ce.chart_id,
+  s.slice_name as chart_name,
+  s.viz_type as chart_type,
+  ce.error_category,
+  -- Контекст дашборда
+  ce.dashboard_id,
+  d.dashboard_title as parent_dashboard,
+  -- Статистика ошибок
+  COUNT(*) as total_errors,
+  COUNT(DISTINCT ce.session_id) as affected_sessions,
+  COUNT(DISTINCT DATE(ce.dttm)) as error_days,
+  -- Временные метрики
+  MIN(ce.dttm) as first_error,
+  MAX(ce.dttm) as last_error,
+  ROUND(COUNT(*)::DECIMAL / COUNT(DISTINCT DATE(ce.dttm)), 2) as avg_errors_per_day,
+  -- Показываем конкретную ошибку (первую встреченную)
+  MIN(ce.error_details) as sample_error,
+  -- Приоритет и статус
+  CASE
+    WHEN COUNT(*) > 30 AND ce.error_category IN ('TIMEOUT', 'SQL_ERROR') THEN '🚨 КРИТИЧНО'
+    WHEN COUNT(*) > 15 OR ce.error_category = 'DML_VIOLATION' THEN '🔴 ВЫСОКИЙ'
+    WHEN COUNT(*) > 5 THEN '🟠 СРЕДНИЙ'
+    ELSE '🟡 НИЗКИЙ'
+  END as priority,
+  -- Рекомендации специфичные для чартов
+  CASE
+    WHEN ce.error_category = 'TIMEOUT' THEN '⚡ Оптимизировать SQL запрос чарта'
+    WHEN ce.error_category = 'CONNECTION' THEN '🔌 Проверить подключение к источнику данных'
+    WHEN ce.error_category = 'PERMISSION' THEN '🔐 Настроить права доступа к таблицам'
+    WHEN ce.error_category = 'SQL_ERROR' THEN '🔧 Исправить SQL в чарте'
+    WHEN ce.error_category = 'MEMORY' THEN '💾 Ограничить объем данных в чарте'
+    WHEN ce.error_category = 'DML_VIOLATION' THEN '🚫 Убрать DML из SQL чарта'
+    WHEN ce.error_category = 'VISUALIZATION_ERROR' THEN '📊 Проверить настройки визуализации'
+    WHEN ce.error_category = 'CONFIG_ERROR' THEN '⚙️ Исправить конфигурацию чарта'
+    WHEN ce.error_category = 'DATASOURCE_ERROR' THEN '🗄️ Проверить источник данных'
+    WHEN ce.error_category = 'PLUGIN_ERROR' THEN '🔌 Установить/настроить плагин Trino'
+    ELSE '🔍 Требует детального анализа'
+  END as recommendation
+
+FROM chart_errors ce
+LEFT JOIN slices s ON s.id = ce.chart_id
+LEFT JOIN dashboards d ON d.id = ce.dashboard_id
+
+GROUP BY 
+  ce.chart_id,
+  s.slice_name,
+  s.viz_type,
+  ce.error_category,
+  ce.dashboard_id,
+  d.dashboard_title
+
+ORDER BY
+  CASE
+    WHEN COUNT(*) > 30 THEN 1
+    WHEN COUNT(*) > 15 THEN 2
+    WHEN COUNT(*) > 5 THEN 3
+    ELSE 4
+  END,
+  COUNT(*) DESC;
+
