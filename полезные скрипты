@@ -101,7 +101,151 @@ ORDER BY
 
 ----------------
 
+-- Детальный анализ производительности дашбордов с названиями
+SELECT 
+    t.dashboard_id,
+    t2.dashboard_title,
+    date_trunc('month', event_day) as month,
+    COUNT(*) as load_count,
+    COUNT(DISTINCT user_id) as affected_users,
+    ROUND(AVG(load_time_ms), 0) as avg_load_time_ms,
+    ROUND(AVG(load_time_ms)/1000.0, 2) as avg_load_time_sec,
+    MIN(load_time_ms) as min_load_ms,
+    MAX(load_time_ms) as max_load_ms,
+    -- Оценка производительности
+    CASE 
+        WHEN AVG(load_time_ms) > 4000 THEN '🔴 Критично медленный'
+        WHEN AVG(load_time_ms) > 2500 THEN '🟠 Медленный'
+        WHEN AVG(load_time_ms) > 1500 THEN '🟡 Средний'
+        ELSE '🟢 Быстрый'
+    END as performance_status,
+    -- Процент быстрых загрузок (< 2 сек)
+    ROUND(
+        COUNT(CASE WHEN load_time_ms < 2000 THEN 1 END) * 100.0 / COUNT(*), 
+        1
+    ) as fast_loads_percent,
+    -- Рекомендации по действиям
+    CASE 
+        WHEN AVG(load_time_ms) > 4000 THEN 'Немедленная оптимизация'
+        WHEN AVG(load_time_ms) > 2500 THEN 'Требует оптимизации'
+        WHEN AVG(load_time_ms) > 1500 THEN 'Мониторинг'
+        ELSE 'Норма'
+    END as action_needed
+FROM (
+    SELECT
+        user_id,
+        date_trunc('day', dttm) AS event_day,
+        (SUBSTRING(json FROM 'source_id[" :]+([0-9]+)')::INT) AS dashboard_id,
+        (SUBSTRING(json FROM 'mount_duration[" :]+([0-9]+)')::INT) AS load_time_ms,
+        SUBSTRING(json FROM 'is_soft_navigation[" :]+(true|false)') AS is_soft_navigation,
+        SUBSTRING(json FROM 'is_empty[" :]+(true|false)') AS is_empty,
+        SUBSTRING(json FROM 'is_published[" :]+(true|false)') AS is_published
+    FROM logs
+    WHERE
+        json LIKE '%mount_dashboard%'
+        AND json LIKE '%source_id%'
+        AND json LIKE '%mount_duration%'
+        AND dttm >= CURRENT_DATE - interval '1 week'
+) t
+LEFT JOIN (
+    SELECT DISTINCT id, dashboard_title 
+    FROM dashboards
+) t2 ON t2.id = t.dashboard_id
+WHERE t.dashboard_id IS NOT NULL AND t.load_time_ms IS NOT NULL
+GROUP BY t.dashboard_id, t2.dashboard_title, date_trunc('month', event_day)
+HAVING AVG(load_time_ms) > 2000  -- Медленнее 2 секунд
+ORDER BY avg_load_time_ms DESC, load_count DESC;
 
 
 
 
+---------------------------------------
+WITH chart_errors AS (
+  SELECT
+    SUBSTRING(json FROM '"slice_id": ?([0-9]+)')::INT as chart_id,
+    SUBSTRING(json FROM '"source_id": ?([0-9]+)')::INT AS dashboard_id,
+    dttm,
+    -- Детализация типов ошибок для чартов
+    CASE
+      WHEN json LIKE '%timeout%' OR json LIKE '%TimeoutError%' THEN 'TIMEOUT'
+      WHEN json LIKE '%connection%' OR json LIKE '%ConnectionError%' THEN 'CONNECTION'
+      WHEN json LIKE '%permission%' OR json LIKE '%PermissionError%' THEN 'PERMISSION'
+      WHEN json LIKE '%failed_query%' OR json LIKE '%QueryError%' THEN 'SQL_ERROR'
+      WHEN json LIKE '%memory%' OR json LIKE '%MemoryError%' THEN 'MEMORY'
+      WHEN json LIKE '%DML is not allowed%' THEN 'DML_VIOLATION'
+      WHEN json LIKE '%viz_type%' OR json LIKE '%visualization%' THEN 'VISUALIZATION_ERROR'
+      WHEN json LIKE '%form_data%' THEN 'CONFIG_ERROR'
+      WHEN json LIKE '%datasource%' THEN 'DATASOURCE_ERROR'
+      -- Добавим специфичную ошибку из ваших логов
+      WHEN json LIKE '%Can''t load plugin%' OR json LIKE '%sqlalchemy.dialects%' THEN 'PLUGIN_ERROR'
+      ELSE 'OTHER_ERROR'
+    END as error_category,
+    SUBSTRING(json FROM '"impression_id": ?"([^"]+)"') as session_id,
+    -- Извлекаем детали ошибки для анализа
+    SUBSTRING(json FROM '"error_details": ?"([^"]+)"') as error_details
+  FROM logs
+  WHERE json LIKE '%error%'
+    AND (json LIKE '%slice_id%' OR json LIKE '%chart%')
+    AND dttm >= CURRENT_DATE - INTERVAL '7 days'
+)
+
+SELECT
+  ce.chart_id,
+  s.slice_name as chart_name,
+  s.viz_type as chart_type,
+  ce.error_category,
+  -- Контекст дашборда
+  ce.dashboard_id,
+  d.dashboard_title as parent_dashboard,
+  -- Статистика ошибок
+  COUNT(*) as total_errors,
+  COUNT(DISTINCT ce.session_id) as affected_sessions,
+  COUNT(DISTINCT DATE(ce.dttm)) as error_days,
+  -- Временные метрики
+  MIN(ce.dttm) as first_error,
+  MAX(ce.dttm) as last_error,
+  ROUND(COUNT(*)::DECIMAL / COUNT(DISTINCT DATE(ce.dttm)), 2) as avg_errors_per_day,
+  -- Показываем конкретную ошибку (первую встреченную)
+  MIN(ce.error_details) as sample_error,
+  -- Приоритет и статус
+  CASE
+    WHEN COUNT(*) > 30 AND ce.error_category IN ('TIMEOUT', 'SQL_ERROR') THEN '🚨 КРИТИЧНО'
+    WHEN COUNT(*) > 15 OR ce.error_category = 'DML_VIOLATION' THEN '🔴 ВЫСОКИЙ'
+    WHEN COUNT(*) > 5 THEN '🟠 СРЕДНИЙ'
+    ELSE '🟡 НИЗКИЙ'
+  END as priority,
+  -- Рекомендации специфичные для чартов
+  CASE
+    WHEN ce.error_category = 'TIMEOUT' THEN '⚡ Оптимизировать SQL запрос чарта'
+    WHEN ce.error_category = 'CONNECTION' THEN '🔌 Проверить подключение к источнику данных'
+    WHEN ce.error_category = 'PERMISSION' THEN '🔐 Настроить права доступа к таблицам'
+    WHEN ce.error_category = 'SQL_ERROR' THEN '🔧 Исправить SQL в чарте'
+    WHEN ce.error_category = 'MEMORY' THEN '💾 Ограничить объем данных в чарте'
+    WHEN ce.error_category = 'DML_VIOLATION' THEN '🚫 Убрать DML из SQL чарта'
+    WHEN ce.error_category = 'VISUALIZATION_ERROR' THEN '📊 Проверить настройки визуализации'
+    WHEN ce.error_category = 'CONFIG_ERROR' THEN '⚙️ Исправить конфигурацию чарта'
+    WHEN ce.error_category = 'DATASOURCE_ERROR' THEN '🗄️ Проверить источник данных'
+    WHEN ce.error_category = 'PLUGIN_ERROR' THEN '🔌 Установить/настроить плагин Trino'
+    ELSE '🔍 Требует детального анализа'
+  END as recommendation
+
+FROM chart_errors ce
+LEFT JOIN slices s ON s.id = ce.chart_id
+LEFT JOIN dashboards d ON d.id = ce.dashboard_id
+
+GROUP BY 
+  ce.chart_id,
+  s.slice_name,
+  s.viz_type,
+  ce.error_category,
+  ce.dashboard_id,
+  d.dashboard_title
+
+ORDER BY
+  CASE
+    WHEN COUNT(*) > 30 THEN 1
+    WHEN COUNT(*) > 15 THEN 2
+    WHEN COUNT(*) > 5 THEN 3
+    ELSE 4
+  END,
+  COUNT(*) DESC;
